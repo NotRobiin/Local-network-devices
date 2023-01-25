@@ -1,91 +1,96 @@
 from huawei_lte_api.Client import Client
-from huawei_lte_api.AuthorizedConnection import AuthorizedConnection
 from huawei_lte_api.Connection import Connection
 import config as cfg
-from pprint import pprint
 import datetime
+import sys
 
 
-def connect(login: str, password: str, ip: str) -> Client:
+def connect_to_router(login: str, password: str, ip: str) -> Client:
     credentials = f"http://{login}:{password}@{ip}/"
-    connection = AuthorizedConnection(credentials)
-    client = Client(connection)
+    connection = Connection(credentials)
 
-    return client
-
-
-def real_name(name: str) -> str:
-    if name is None:
-        return "Unknown"
-
-    if name not in cfg.known_hosts.keys():
-        return name
-
-    return cfg.known_hosts[name]
+    return Client(connection)
 
 
-def name_in_info(info: list, name: str) -> bool:
-    if name == "Unknown":
-        return False
-
-    names = [info[i]["name"] for i in info.keys()]
-
-    return name in names
-
-
-def get_users_info(c: Client) -> dict:
-    data = c.dhcp.dhcp_host_info()["Hosts"]["Host"]
+def get_device_info(c: Client) -> dict:
+    devices = c.dhcp.dhcp_host_info()["Hosts"]["Host"]
     output = {}
+    tags = cfg.known_hosts.keys()
 
-    for d in data:
-        key = d["ClientIndex"]
-        name = real_name(d["ClientName"])
+    for device in devices:
+        key = device["ClientIndex"]
+        name = device["ClientName"]
 
-        # Skip duplicates
-        if name_in_info(output, name) or name == "Unknown":
+        if name in cfg.known_hosts.keys():
+            name = cfg.known_hosts[name]
+
+        # Skip unknown devices (they have no data)
+        if name == "Unknown" or name is None:
             continue
 
-        seconds = cfg.expire_time - int(d["ClientExpires"])
-        last_active = str(datetime.timedelta(seconds=seconds))
+        # Skip duplicate entries
+        if name in [output[i]["name"] for i in output.keys()]:
+            continue
 
-        if seconds >= cfg.expire_time:
+        dhcp_lease = int(c.dhcp.settings()["DhcpLeaseTime"])
+        elapsed = dhcp_lease - int(device["ClientExpires"])
+        last_active = str(datetime.timedelta(seconds=elapsed))
+
+        if elapsed >= dhcp_lease:
             last_active += " (timed out)"
 
         output[key] = {
             "name": name,
-            "system_name": d["ClientName"],
+            "device_name": device["ClientName"],
             "last_active": last_active,
-            "last_active_sec": seconds,
+            "last_active_sec": elapsed,
         }
 
     return output
 
 
-def display_info(c: Client) -> None:
+def display_devices(c: Client) -> None:
     if c is None:
+        print("Provided client is not a valid object.")
         return
 
-    users_info = get_users_info(c)
+    users_info = get_device_info(c)
     users_info = dict(
         sorted(users_info.items(), key=lambda item: item[1]["last_active_sec"])
     )
 
-    if len(users_info):
-        print("Connected devices:")
-        print(f"{'Tag':<30} {'Name':<30} Last active (!)\n")
-
-        for user in users_info.values():
-            name = user["name"]
-            sys_name = user["system_name"]
-            last = user["last_active"]
-
-            print(f"{name:<30} {sys_name:<30} {last}")
-
-    else:
+    if len(users_info) == 0:
         print("There are no connected users.")
         return
 
+    print("Connected devices:")
+    print(f"{'Tag':<30} {'Name':<30} Last active\n")
 
-client = connect(cfg.login, cfg.password, cfg.ip)
+    for user in users_info.values():
+        name = user["name"]
+        sys_name = user["device_name"]
+        last = user["last_active"]
 
-display_info(client)
+        print(f"{name:<30} {sys_name:<30} {last}")
+
+
+def get_arg(which):
+    if len(sys.argv) >= which + 1:
+        return sys.argv[which]
+
+
+def main():
+    login = get_arg(1) or "admin"
+    password = get_arg(2) or "admin"
+    ip = get_arg(3)
+
+    if ip is None:
+        print("Cannot connect without router ip.")
+        return
+
+    client = connect_to_router(login, password, ip)
+    display_devices(client)
+
+
+if __name__ == "__main__":
+    main()
