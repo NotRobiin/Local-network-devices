@@ -17,7 +17,3 @@ python main.py <router_login> <router_password> <router_ip>
 -   Huawei router
 -   Python 3.8+
 -   Huawei API Package [huawei-lte-api](https://pypi.org/project/huawei-lte-api/)
-
-### Why?
-
-Because the router's website did not work and I had to find a workaround.
